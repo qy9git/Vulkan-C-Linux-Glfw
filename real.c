@@ -8,59 +8,45 @@
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 // Window macros
-#define WIN_WIDTH 800u //uint32_t
-#define WIN_HEIGHT 800u //uint32_t
-#define WIN_TITLE "This is not X11"
+#define WIN_WIDTH 1280u //uint32_t
+#define WIN_HEIGHT 720u //uint32_t
+#define WIN_TITLE "real"
 // Vulkan macros
-#ifdef NDEBUG
+#ifdef DEBUG
 #define enableValidationLayers false
 #else
 #define enableValidationLayers true
 #endif
 // some debug stuff
 //static uint32_t StupidCounter=0u;
-#define IAMHERE printf("I AM HERE %d\n",++StupidCounter);
+//#define IAMHERE printf("I AM HERE %d\n",++StupidCounter);
 // end of preprocessor
-
-
-
-const char *validationLayers[] = {"VK_LAYER_KHRONOS_validation"};
-const uint32_t validationLayersCount=sizeof(validationLayers)/sizeof(validationLayers[0]);
-
 
 typedef struct{
     GLFWwindow *window;
     VkInstance instance;
-}App;
+}Re;
 
-inline static void ex(const char *message){
-    if(message!=NULL)
-    fprintf(stderr,"%s",message);
+inline static void mainLoop(Re *pRe){
+    while(!glfwWindowShouldClose(pRe->window))
+        glfwPollEvents();
+}
+
+inline static void cleanup(Re *pRe){
+    vkDestroyInstance(pRe->instance, NULL);
+
+    glfwDestroyWindow(pRe->window);
     glfwTerminate();
+}
+
+inline static void ex(const char *message,Re *pRe){
+    if(message!=NULL)
+        fputs(message,stderr);
+    cleanup(pRe);
     exit(EXIT_FAILURE);
 }
 
-void initWindow(App*);
-void initVulkan(App*);
-void mainLoop(App*);
-void cleanup(App*);
-
-void createInstance(App*);
-
-bool checkValidationLayerSupport(void);
-////////////////////////////////////////////////////////////////////////////////////////////////
-int main(/*int argc,char *argv[],char *env[]*/){
-    App pp={0};
-    initWindow(&pp);
-    initVulkan(&pp);
-    mainLoop(&pp);
-    cleanup(&pp);
-
-    glfwTerminate();
-    return EXIT_SUCCESS;
-}
-
-void initWindow(App *pApp){
+inline static void initWindow(Re *pRe){
     glfwInitHint(GLFW_PLATFORM,GLFW_PLATFORM_WAYLAND);
     // Chooses window protocol
 
@@ -70,34 +56,19 @@ void initWindow(App *pApp){
     //glfwInitHint(GLFW_WAYLAND_LIBDECOR,GLFW_WAYLAND_PREFER_LIBDECOR);
     // Wayland stuff
 
-    if(!glfwInit())ex(NULL);
+    if(!glfwInit())ex(NULL,pRe);
 
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API); //no openGL
     glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE); //no window resizing
 
-    pApp->window = glfwCreateWindow(WIN_WIDTH, WIN_HEIGHT, WIN_TITLE, NULL, NULL);
-}
-void initVulkan(App *pApp){
-    createInstance(pApp);
-}
-void mainLoop(App *pApp){
-    while(!glfwWindowShouldClose(pApp->window)){
-        glfwPollEvents();
-    }
-}
-void cleanup(App *pApp){
-    vkDestroyInstance(pApp->instance, NULL);
-
-    glfwDestroyWindow(pApp->window);
-    glfwTerminate();
+    pRe->window = glfwCreateWindow(WIN_WIDTH, WIN_HEIGHT, WIN_TITLE, NULL, NULL);
 }
 
-
-bool verifyExtensionSupport(
+inline static bool verifyExtensionSupport(
     const uint32_t extensionCount, //Vulkan extensionCount
     const uint32_t glfwExtensionCount,
     const char** restrict glfwExtensions,
-    const VkExtensionProperties * restrict extensions){
+    const VkExtensionProperties * restrict extensions){ //UIcreateInstance
     bool foundExtension;
     for(uint32_t i=0u; i<glfwExtensionCount; ++i){
         foundExtension = false;
@@ -111,9 +82,36 @@ bool verifyExtensionSupport(
     return true;
 }
 
-void createInstance(App *pApp){
+static const char *validationLayers[] = {"VK_LAYER_KHRONOS_validation"};
+static const uint32_t validationLayersCount=sizeof(validationLayers)/sizeof(validationLayers[0]);
+
+inline static bool checkValidationLayerSupport(void){//UIcreateInstance
+    uint32_t layerCount;
+    vkEnumerateInstanceLayerProperties(&layerCount, NULL);
+
+    VkLayerProperties *availableLayers = malloc(sizeof(VkLayerProperties) * layerCount);
+    vkEnumerateInstanceLayerProperties(&layerCount, availableLayers);
+
+    bool layerFound;
+    for(uint32_t i=0u; i<validationLayersCount; ++i){
+        layerFound = false;
+        for(uint32_t j=0u; j<layerCount; ++j)
+            if(strcmp(availableLayers[j].layerName,validationLayers[i]) == 0){
+                layerFound = true;
+                break;
+            }
+        if(!layerFound){
+            free(availableLayers);
+            return false;
+        }
+    }
+    free(availableLayers);
+    return true;
+}
+
+inline static void createInstance(Re *pRe){
     if(enableValidationLayers && !checkValidationLayerSupport())
-        ex("validation layers requested, but not available!\n");
+        ex("validation layers requested, but not available!\n",pRe);
 
     VkApplicationInfo appInfo = {
         .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
@@ -138,7 +136,7 @@ void createInstance(App *pApp){
     .enabledLayerCount = 0
     };
 
-    if(vkCreateInstance(&createInfo, NULL, &(pApp->instance))!=VK_SUCCESS)ex(NULL);
+    if(vkCreateInstance(&createInfo, NULL, &(pRe->instance))!=VK_SUCCESS)ex(NULL,pRe);
 
     uint32_t extensionCount = 0u;
     vkEnumerateInstanceExtensionProperties(NULL, &extensionCount, NULL);
@@ -147,42 +145,32 @@ void createInstance(App *pApp){
     vkEnumerateInstanceExtensionProperties(NULL, &extensionCount, extensions);
 
     // listing extensions and checking matches
-    printf("Vulkan available extentions:\n");
+    puts("Vulkan available extentions:");
     for(uint32_t i=0u; i<extensionCount; ++i)
         printf("\textension: %s\n",extensions[i].extensionName);
-    printf("GLFW required extentions:\n");
+    puts("GLFW required extentions:");
     for(uint32_t i=0u; i<glfwExtensionCount; ++i)
         printf("\textension: %s\n",glfwExtensions[i]);
     // end of listing extensions
     if(verifyExtensionSupport(extensionCount,glfwExtensionCount,glfwExtensions,extensions))
-        printf("All necessary GLFW extentions are available\n");
+        puts("All necessary GLFW extentions are available");
     else{
         free(extensions);
-        ex("Missing necessary GLFW extentions\n");
+        ex("Missing necessary GLFW extentions\n",pRe);
     }
 }
 
-bool checkValidationLayerSupport(void){
-    uint32_t layerCount;
-    vkEnumerateInstanceLayerProperties(&layerCount, NULL);
-
-    VkLayerProperties *availableLayers = malloc(sizeof(VkLayerProperties) * layerCount);
-    vkEnumerateInstanceLayerProperties(&layerCount, availableLayers);
-
-    bool layerFound;
-    for(uint32_t i=0u; i<validationLayersCount; ++i){
-        layerFound = false;
-        for(uint32_t j=0u; j<layerCount; ++j)
-            if(strcmp(availableLayers[j].layerName,validationLayers[i]) == 0){
-                layerFound = true;
-                break;
-            }
-        if(!layerFound){
-            free(availableLayers);
-            return false;
-        }
-    }
-    free(availableLayers);
-    return true;
+inline static void initVulkan(Re *pRe){
+    createInstance(pRe);
 }
 
+////////////////////////////////////////////////////////////////////////////////////////////////
+int main(/*int argc,char *argv[],char *env[]*/){
+    Re al={0};
+    initWindow(&al);
+    initVulkan(&al);
+    mainLoop(&al);
+    cleanup(&al);
+
+    return EXIT_SUCCESS;
+}
