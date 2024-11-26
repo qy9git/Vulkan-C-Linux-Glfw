@@ -1,101 +1,120 @@
 // C libraries
-#include <stdlib.h>
-#include <stdio.h>
+#include <stdlib.h> //malloc/free/exit
+#include <stdio.h> //puts/fputs/fprintf
 #include <inttypes.h>
 #include <stdbool.h>
-#include <string.h>
-// GLFW for windowing
+#include <string.h> //strcmp
+#include <limits.h>
+#include <assert.h>
+// POSIX headers
+#include <unistd.h>
+#include <signal.h>
+
+// GLFW library
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
+
+// Personal libraries
+#include "shorttypes.h"
+
 // Window macros
-#define WIN_WIDTH 1280u //uint32_t
-#define WIN_HEIGHT 720u //uint32_t
+#define WIN_WIDTH 1280u //u32
+#define WIN_HEIGHT 720u //u32
 #define WIN_TITLE "real"
+
 // Vulkan macros
-#ifdef DEBUG
-#define enableValidationLayers false
-#else
+#define APP_NAME "real"
+#ifdef NDEBUG //in cpp it means "Not debug" for us it means debug due to assert.h
 #define enableValidationLayers true
+#else
+#define enableValidationLayers false
 #endif
+
 // some debug stuff
-//static uint32_t StupidCounter=0u;
-//#define IAMHERE printf("I AM HERE %d\n",++StupidCounter);
+#ifdef NDEBUG
+// #define uf8 u8
+// #define uf16 u16
+// #define uf32 u32
+static u32 StupidCounter=0u;
+#define IAMHERE printf("I AM HERE %u\n",++StupidCounter);fflush(stdout);
+#include"debugV2.h"
+#endif
 // end of preprocessor
 
 typedef struct{
     GLFWwindow *window;
     VkInstance instance;
-}Re;
+}App;
 
-inline static void mainLoop(Re *pRe){
-    while(!glfwWindowShouldClose(pRe->window))
-        glfwPollEvents();
+
+inline static void cleanup(App * const pApp){
+    if(pApp == NULL)return; //if ex() is called before initilisation (it segfaults)
+    vkDestroyInstance(pApp->instance, NULL); //NULL or a valid instance, NULL.
+    if(pApp->window != NULL)glfwDestroyWindow(pApp->window); //Documentation doesn't mention if NULL is accepted but it works
 }
 
-inline static void cleanup(Re *pRe){
-    vkDestroyInstance(pRe->instance, NULL);
-
-    glfwDestroyWindow(pRe->window);
-    glfwTerminate();
-}
-
-inline static void ex(const char *message,Re *pRe){
-    if(message!=NULL)
-        fputs(message,stderr);
-    cleanup(pRe);
+static App * globalAppPointer=NULL;
+static void ex(const uf16 errcode, const char * const file, const uf16 line){
+    fputs("\nError: ",stderr);
+    switch(errcode){
+        case 1u:fputs("malloc failure",stderr);break;
+        case 101u:fputs("glfwInit failure",stderr);break;
+        case 102u:fputs("Validation layers requested, but not available!",stderr);break;
+        case 103u:fputs("vkCreateInstance failure",stderr);break;
+        case 104u:fputs("Missing necessary GLFW extentions",stderr);break;
+        case 105u:fputs("atexit failure",stderr);break;
+        default:fputs("Unknown error",stderr);
+    }
+    if(file != NULL)
+        fprintf(stderr,", at line %"PRINTuf16" in the file %s",line,file);
+    fputc('\n',stderr);
+    cleanup(globalAppPointer);
     exit(EXIT_FAILURE);
 }
 
-inline static void initWindow(Re *pRe){
-    glfwInitHint(GLFW_PLATFORM,GLFW_PLATFORM_WAYLAND);
-    // Chooses window protocol
+static void f_atexit(void){
+    glfwTerminate(); // can be called before glfwInit
+#ifdef NDEBUG
+    debug_memory_end(); // can be called before debug_memory_init
+#endif
+}
+#define ex(errcode) ex(errcode,__FILE__,__LINE__) //pApp is hard coded in the macro
+
+inline static void mainLoop(const App * const pApp){
+    while(!glfwWindowShouldClose(pApp->window))
+        glfwPollEvents();
+}
+
+
+inline static void initWindow(App * const pApp){
 
     glfwInitHint(GLFW_ANGLE_PLATFORM_TYPE,GLFW_ANGLE_PLATFORM_TYPE_VULKAN);
-    // Chooses the renderer
 
-    //glfwInitHint(GLFW_WAYLAND_LIBDECOR,GLFW_WAYLAND_PREFER_LIBDECOR);
-    // Wayland stuff
-
-    if(!glfwInit())ex(NULL,pRe);
+    if(!glfwInit())ex(101u); //glfw initilisation (not an error checker)
 
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API); //no openGL
     glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE); //no window resizing
 
-    pRe->window = glfwCreateWindow(WIN_WIDTH, WIN_HEIGHT, WIN_TITLE, NULL, NULL);
+    pApp->window = glfwCreateWindow(WIN_WIDTH, WIN_HEIGHT, WIN_TITLE, NULL, NULL);
 }
 
-inline static bool verifyExtensionSupport(
-    const uint32_t extensionCount, //Vulkan extensionCount
-    const uint32_t glfwExtensionCount,
-    const char** restrict glfwExtensions,
-    const VkExtensionProperties * restrict extensions){ //UIcreateInstance
-    bool foundExtension;
-    for(uint32_t i=0u; i<glfwExtensionCount; ++i){
-        foundExtension = false;
-        for(uint32_t j=0u; j<extensionCount; ++j)
-            if(strcmp(extensions[j].extensionName,glfwExtensions[i]) == 0){
-                foundExtension = true;
-                break;
-            }
-        if(!foundExtension)return false;
-    }
-    return true;
-}
 
-static const char *validationLayers[] = {"VK_LAYER_KHRONOS_validation"};
-static const uint32_t validationLayersCount=sizeof(validationLayers)/sizeof(validationLayers[0]);
+
+static const char * const validationLayers[] = {"VK_LAYER_KHRONOS_validation"};
+#define validationLayersCount (sizeof validationLayers /sizeof validationLayers[0])//u32
 
 inline static bool checkValidationLayerSupport(void){//UIcreateInstance
-    uint32_t layerCount;
+    u32 layerCount;
     vkEnumerateInstanceLayerProperties(&layerCount, NULL);
 
-    VkLayerProperties *availableLayers = malloc(sizeof(VkLayerProperties) * layerCount);
+    VkLayerProperties *availableLayers = malloc(layerCount * sizeof(VkLayerProperties));
+    if(availableLayers == NULL)ex(1u);
     vkEnumerateInstanceLayerProperties(&layerCount, availableLayers);
 
     bool layerFound;
-    for(uint32_t i=0u; i<validationLayersCount; ++i){
+    for(u32 i=0u; i<validationLayersCount; ++i){
         layerFound = false;
-        for(uint32_t j=0u; j<layerCount; ++j)
+        for(u32 j=0u; j<layerCount; ++j)
             if(strcmp(availableLayers[j].layerName,validationLayers[i]) == 0){
                 layerFound = true;
                 break;
@@ -109,13 +128,27 @@ inline static bool checkValidationLayerSupport(void){//UIcreateInstance
     return true;
 }
 
-inline static void createInstance(Re *pRe){
+inline static bool verifyExtensionSupport(const u32 VulkanextensionCount,const u32 glfwExtensionCount,const char* const restrict* const restrict glfwExtensions,const VkExtensionProperties * const restrict extensions){ //UIcreateInstance
+    bool foundExtension;
+    for(u32 i=0u; i<glfwExtensionCount; ++i){
+        foundExtension = false;
+        for(u32 j=0u; j<VulkanextensionCount; ++j)
+            if(strcmp(extensions[j].extensionName,glfwExtensions[i]) == 0){
+                foundExtension = true;
+                break;
+            }
+        if(!foundExtension)return false;
+    }
+    return true;
+}
+
+inline static void createInstance(App * const pApp){
     if(enableValidationLayers && !checkValidationLayerSupport())
-        ex("validation layers requested, but not available!\n",pRe);
+        ex(102u);
 
     VkApplicationInfo appInfo = {
         .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
-        .pApplicationName = WIN_TITLE,
+        .pApplicationName = APP_NAME,
         .applicationVersion = VK_MAKE_VERSION(1, 0, 0),
         .pEngineName = "No Engine",
         .engineVersion = VK_MAKE_VERSION(1, 0, 0),
@@ -123,7 +156,7 @@ inline static void createInstance(Re *pRe){
         .pNext = NULL
     };
 
-    uint32_t glfwExtensionCount = 0u;
+    u32 glfwExtensionCount = 0u;
     const char **glfwExtensions;
 
     glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
@@ -133,40 +166,54 @@ inline static void createInstance(Re *pRe){
     .pApplicationInfo = &appInfo,
     .enabledExtensionCount = glfwExtensionCount,
     .ppEnabledExtensionNames = glfwExtensions,
-    .enabledLayerCount = 0
     };
+    if(enableValidationLayers){
+        createInfo.enabledLayerCount = validationLayersCount;
+        createInfo.ppEnabledLayerNames = validationLayers;
+    }else
+        createInfo.enabledLayerCount = 0;
 
-    if(vkCreateInstance(&createInfo, NULL, &(pRe->instance))!=VK_SUCCESS)ex(NULL,pRe);
+    if(vkCreateInstance(&createInfo, NULL, &(pApp->instance))!=VK_SUCCESS)ex(103u);
 
-    uint32_t extensionCount = 0u;
+    u32 extensionCount = 0u;
     vkEnumerateInstanceExtensionProperties(NULL, &extensionCount, NULL);
 
-    VkExtensionProperties *extensions = malloc(sizeof(VkExtensionProperties) * extensionCount);
+    VkExtensionProperties *extensions = malloc(extensionCount * sizeof(VkExtensionProperties));
+    if(extensions == NULL)ex(1u);
     vkEnumerateInstanceExtensionProperties(NULL, &extensionCount, extensions);
 
-    // listing extensions and checking matches
+#ifdef NDEBUG // listing extensions and checking matches
     puts("Vulkan available extentions:");
-    for(uint32_t i=0u; i<extensionCount; ++i)
+    for(u32 i=0u; i<extensionCount; ++i)
         printf("\textension: %s\n",extensions[i].extensionName);
     puts("GLFW required extentions:");
-    for(uint32_t i=0u; i<glfwExtensionCount; ++i)
+    for(u32 i=0u; i<glfwExtensionCount; ++i)
         printf("\textension: %s\n",glfwExtensions[i]);
-    // end of listing extensions
-    if(verifyExtensionSupport(extensionCount,glfwExtensionCount,glfwExtensions,extensions))
+#endif // end of listing extensions
+    if(verifyExtensionSupport(extensionCount,glfwExtensionCount,glfwExtensions,extensions)){
+        free(extensions);
+#ifdef NDEBUG
         puts("All necessary GLFW extentions are available");
+#endif
+    }
     else{
         free(extensions);
-        ex("Missing necessary GLFW extentions\n",pRe);
+        ex(104u);
     }
 }
 
-inline static void initVulkan(Re *pRe){
-    createInstance(pRe);
+inline static void initVulkan(App * const pApp){
+    createInstance(pApp);
 }
 
-////////////////////////////////////////////////////////////////////////////////////////////////
 int main(/*int argc,char *argv[],char *env[]*/){
-    Re al={0};
+    if(atexit(f_atexit))ex(105u);
+#ifdef NDEBUG
+    debug_memory_init(250u); //NOTHING GOES BEFORE THIS
+#endif
+//////////////////////////////////////////////// PRE MAIN
+    App al = {0};
+    globalAppPointer = &al;
     initWindow(&al);
     initVulkan(&al);
     mainLoop(&al);
@@ -174,3 +221,12 @@ int main(/*int argc,char *argv[],char *env[]*/){
 
     return EXIT_SUCCESS;
 }
+//system implementation checks
+static_assert(-9/5==-1,"Division implementation is incompatible");
+static_assert(-11/-5==2,"Division implementation is incompatible");
+static_assert(sizeof(double) == 8,"Double is not 64 bit");
+static_assert(sizeof(float) == 4,"float is not 32 bit ");
+//macro type checks
+static_assert(WIN_WIDTH<=UINT32_MAX,"type failure");
+static_assert(WIN_HEIGHT<=UINT32_MAX,"type failure");
+static_assert(validationLayersCount<=UINT32_MAX,"type failure");
